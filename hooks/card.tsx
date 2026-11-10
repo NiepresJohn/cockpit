@@ -269,7 +269,7 @@ const Card: ClientModule<Props, State> = (raw, surface) => {
           <Text wrap="truncate">
             <Text color={C.faint}>{'╌╌╌┐ '}</Text>
             <Text color={C.cyan} bold>{`AGENTS ${running} running`}</Text>
-            <Text color={C.faint}>{p.agentsTotal > running ? ` · ${p.agentsTotal - running} done ┌` : ' ┌'}</Text>
+            <Text color={C.faint}>{p.agentsTotal > running ? ` · ${p.agentsTotal - running} finished ┌` : ' ┌'}</Text>
           </Text>
           {p.agents.map((a, i) => {
             const live = a.status === 'running'

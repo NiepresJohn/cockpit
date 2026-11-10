@@ -95,8 +95,11 @@ export const restore = (stored: unknown): State => {
   }
 }
 
+/** Control bytes (ESC, BEL, C1) would reach the terminal as escape sequences. */
+const stripControl = (s: string) => s.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '')
+
 export const clip = (s: string, n: number) => {
-  const one = s.replace(/\s+/g, ' ').trim()
+  const one = stripControl(s).replace(/\s+/g, ' ').trim()
   if (n <= 0) return ''
   return one.length > n ? `${one.slice(0, Math.max(0, n - 1)).trimEnd()}…` : one
 }
@@ -139,7 +142,8 @@ export const countdown = (iso: string | null | undefined, now: number) => {
 /** The limit named like the 5-hour or 7-day window, if the host reports one. */
 export const findWindow = (limits: Limit[], which: 'five' | 'seven') => {
   const re = which === 'five' ? /five|5/i : /seven|7/i
-  return limits.find(l => re.test(l.kind))
+  const exact = which === 'five' ? 'five_hour' : 'seven_day'
+  return limits.find(l => l.kind === exact) ?? limits.find(l => re.test(l.kind))
 }
 
 /** The highest mark a reading climbed through, else null. First reading never counts. */
@@ -175,10 +179,16 @@ const SECRETS: [RegExp, string][] = [
   [/(--(?:token|password|api-key|secret)[= ])\S+/gi, '$1•••'],
   [/(\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)=)\S+/g, '$1•••'],
   [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s@]+@/gi, '$1•••@'],
+  [/(\bcurl\b[^|;&]*?\s(?:-u|--user)[= ]?[^\s:]+:)\S+/gi, '$1•••'],
+  [/(\b(?:sshpass|mysql|mysqldump)\b[^|;&]*?\s-p ?)\S+/gi, '$1•••'],
+  [/\bAKIA[0-9A-Z]{16}\b/g, '•••'],
+  [/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, '•••'],
+  [/([?&](?:key|sig|signature|access_token|api_key|token)=)[^\s&]+/gi, '$1•••'],
+  [/(\bcookie\s*:\s*)\S.*/gi, '$1•••'],
 ]
 
 /** Mask credentials: the card shows commands on screen, and screens get shared. */
-export const scrub = (s: string) => SECRETS.reduce((t, [re, to]) => t.replace(re, to), s)
+export const scrub = (s: string) => SECRETS.reduce((t, [re, to]) => t.replace(re, to), stripControl(s))
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
 const text = (v: unknown) => (typeof v === 'string' ? v : '')

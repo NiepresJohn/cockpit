@@ -26,6 +26,7 @@ import {
   modelName,
   pushHist,
   restore,
+  scrub,
   sweepAgents,
   usd,
   visibleAgents,
@@ -100,18 +101,18 @@ async function probeWhere($: EngineInterface, at?: string) {
 async function probeOnce($: EngineInterface, at?: string) {
   const cwd = at ?? (await $.session.cwd().catch(() => ''))
   const git = async (...args: string[]) => {
-    const r = await $.process.run(['git', ...args], { cwd: cwd || undefined, timeoutMs: 3000 }).catch(() => null)
+    const r = await $.process.run(['git', '-c', 'core.fsmonitor=false', '--no-optional-locks', ...args], { cwd: cwd || undefined, timeoutMs: 3000 }).catch(() => null)
     return r && r.exitCode === 0 ? r.stdout.trim() : ''
   }
   const top = await git('rev-parse', '--show-toplevel')
   const where: Where = top
     ? {
-        repo: top.split('/').pop() ?? '',
+        repo: clip(top.split('/').pop() ?? '', 64),
         branch: (await git('branch', '--show-current')) || (await git('rev-parse', '--short', 'HEAD')),
         ...diffTotals(await git('diff', 'HEAD', '--numstat')),
         ...aheadBehind(await git('rev-list', '--left-right', '--count', '@{u}...HEAD')),
       }
-    : { repo: cwd.split('/').filter(Boolean).pop() ?? '', branch: '', add: 0, del: 0, ahead: 0, behind: 0 }
+    : { repo: clip(cwd.split('/').filter(Boolean).pop() ?? '', 64), branch: '', add: 0, del: 0, ahead: 0, behind: 0 }
   await patch($, s => (JSON.stringify(s.where) === JSON.stringify(where) ? {} : { where }))
 }
 
@@ -283,7 +284,7 @@ export const register: Register = (on, options) => {
       if (cost !== null) await patch($, () => ({ cost }))
     } else {
       const id = e.agentId
-      await patchAgent($, id, a => (a.status === 'running' ? { status: agentStatusFor(e.reason), endAt: now, ...(e.answer ? { doing: clip(e.answer, 64) } : {}) } : {}))
+      await patchAgent($, id, a => (a.status === 'running' ? { status: agentStatusFor(e.reason), endAt: now, ...(e.answer ? { doing: clip(scrub(e.answer), 64) } : {}) } : {}))
     }
     await fitPane($)
     return done

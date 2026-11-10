@@ -149,3 +149,26 @@ test('isVerb accepts only the documented verbs', () => {
   for (const v of ['open', 'close', 'reset', 'demo']) expect(isVerb(v)).toBe(true)
   expect(isVerb('bogus')).toBe(false)
 })
+
+test('findWindow prefers the plain window over a per-model one listed first', () => {
+  const limits = [{ kind: 'seven_day_opus', pct: 99, resetsAt: null }, { kind: 'seven_day', pct: 20, resetsAt: null }]
+  expect(findWindow(limits, 'seven')?.pct).toBe(20)
+})
+
+test('clip strips terminal control bytes', () => {
+  expect(clip('a\x1b]0;pwned\x07b\x1b[2Jc', 40)).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/)
+  expect(doing('Bash', { input: { command: 'echo \x1b[2J hi' } })).not.toContain('\x1b')
+})
+
+test('scrub masks basic-auth flags, db passwords, cloud and URL credentials', () => {
+  for (const [raw, secret] of [
+    ['curl -u admin:hunter2 https://x.io', 'hunter2'],
+    ['sshpass -p hunter2 ssh host', 'hunter2'],
+    ['mysql -pSecret123 db', 'Secret123'],
+    ['aws AKIAABCDEFGHIJKLMNOP', 'AKIAABCDEFGHIJKLMNOP'],
+    ['x eyJhbGciOi.eyJzdWIiOi.abc123def', 'eyJhbGciOi'],
+    ['curl https://x.io/?key=abc12345&a=1', 'abc12345'],
+    ['curl -H "Cookie: sid=zzz999"', 'zzz999'],
+  ]) expect(scrub(raw)).not.toContain(secret)
+  expect(scrub('git commit -m ok')).toBe('git commit -m ok')
+})
