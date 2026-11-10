@@ -12,6 +12,8 @@ import {
   agentRows,
   agentStatusFor,
   aheadBehind,
+  isVerb,
+  VERBS,
   cardRows,
   clip,
   clock,
@@ -159,6 +161,7 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'cockpit' }, async ($, e) => {
     const verb = e.args.trim().split(/\s+/)[0] || 'open'
+    if (!isVerb(verb)) return { text: `Unknown option "${verb}". Usage: /cockpit [${VERBS.join('|')}]` }
     if (verb === 'close') {
       await $.ui.close({ id: PANE })
       closedByUser = true

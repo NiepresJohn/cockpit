@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { aheadBehind, pushHist, HIST_LEN, agentCounts, MAX_AGENTS, STALE_AGENT_MS, addAgent, sweepAgents, agentRows, agentStatusFor, cardRows, clip, clock, compact, countdown, crossed, diffTotals, doing, findWindow, modelName, restore, scrub, usd, visibleAgents, windowLabel } from '../hooks/lib'
+import { isVerb, aheadBehind, pushHist, HIST_LEN, agentCounts, MAX_AGENTS, STALE_AGENT_MS, addAgent, sweepAgents, agentRows, agentStatusFor, cardRows, clip, clock, compact, countdown, crossed, diffTotals, doing, findWindow, modelName, restore, scrub, usd, visibleAgents, windowLabel } from '../hooks/lib'
 import type { Agent } from '../hooks/lib'
 
 const agent = (over: Partial<Agent>): Agent => ({ id: 'a', name: 'n', tool: '', doing: '', status: 'running', since: 0, endAt: null, steps: 0, ctx: 0, ...over })
@@ -143,4 +143,9 @@ test('pushHist keeps the newest HIST_LEN readings; restore drops junk history', 
 test('aheadBehind parses rev-list counts and tolerates empty output', () => {
   expect(aheadBehind('3\t2')).toEqual({ behind: 3, ahead: 2 })
   expect(aheadBehind('')).toEqual({ behind: 0, ahead: 0 })
+})
+
+test('isVerb accepts only the documented verbs', () => {
+  for (const v of ['open', 'close', 'reset', 'demo']) expect(isVerb(v)).toBe(true)
+  expect(isVerb('bogus')).toBe(false)
 })

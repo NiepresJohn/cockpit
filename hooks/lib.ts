@@ -244,3 +244,6 @@ export const sweepAgents = (agents: Agent[], now: number): Agent[] =>
   agents.some(a => a.status === 'running' && now - a.since > STALE_AGENT_MS)
     ? agents.map(a => (a.status === 'running' && now - a.since > STALE_AGENT_MS ? { ...a, status: 'stopped' as const, endAt: now } : a))
     : agents
+
+export const VERBS = ['open', 'close', 'reset', 'demo'] as const
+export const isVerb = (v: string): v is (typeof VERBS)[number] => (VERBS as readonly string[]).includes(v)
