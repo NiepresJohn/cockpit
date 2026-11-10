@@ -211,6 +211,7 @@ export const register: Register = (on, options) => {
     if (openOnStart && !isPlaced && !closedByUser) void openPane($).catch(() => undefined)
     const now = await $.clock.now()
     await patch($, s => ({ running: true, turnStart: now, edits: 0, activity: '', agents: sweepAgents(s.agents, now) }))
+    await fitPane($)
     return next(e)
   })
 
@@ -282,7 +283,7 @@ export const register: Register = (on, options) => {
       if (cost !== null) await patch($, () => ({ cost }))
     } else {
       const id = e.agentId
-      await patchAgent($, id, a => (a.status === 'running' ? { status: agentStatusFor(e.reason), endAt: now, doing: clip(e.answer ?? '', 64) } : {}))
+      await patchAgent($, id, a => (a.status === 'running' ? { status: agentStatusFor(e.reason), endAt: now, ...(e.answer ? { doing: clip(e.answer, 64) } : {}) } : {}))
     }
     await fitPane($)
     return done
