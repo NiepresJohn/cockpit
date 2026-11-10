@@ -176,15 +176,15 @@ export const register: Register = (on, options) => {
       })
       await patch($, () => ({
         model: 'claude-opus-5-5[1m]', effort: 'xhigh', running: true, turnStart: now - 95000, edits: 4,
-        activity: '$ pnpm test --filter number-hub', ctxPct: 88, ctxTokens: 880000, ctxWindow: 1000000, cost: 12.34,
+        activity: '$ pnpm test --filter web', ctxPct: 88, ctxTokens: 880000, ctxWindow: 1000000, cost: 12.34,
         limits: [
           { kind: 'five_hour', pct: 72, resetsAt: iso(134) },
           { kind: 'seven_day', pct: 91, resetsAt: iso(3 * 1440 + 240) },
         ],
-        where: { repo: 'number-hub', branch: 'feat/messaging-health', add: 128, del: 37, ahead: 2, behind: 1 },
+        where: { repo: 'my-app', branch: 'feat/search', add: 128, del: 37, ahead: 2, behind: 1 },
         agents: [
-          agent('d1', 'code-reviewer', 'running', 'Read apps/web/usage/Health.tsx', 62),
-          agent('d2', 'security-reviewer', 'running', '$ grep -rn tenant_id', 41),
+          agent('d1', 'code-reviewer', 'running', 'Read src/components/Search.tsx', 62),
+          agent('d2', 'security-reviewer', 'running', '$ grep -rn userId', 41),
           agent('d3', 'tdd-guide', 'done', 'all 14 tests green', 120),
           agent('d4', 'e2e-runner', 'failed', 'timeout waiting for :5000', 90),
         ],
