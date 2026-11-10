@@ -171,8 +171,11 @@ export const diffTotals = (numstat: string) => {
   return { add, del }
 }
 
+// The lazy patterns below are quadratic; nothing past the display width is ever drawn.
+const SCRUB_MAX = 2000
+
 const SECRETS: [RegExp, string][] = [
-  [/(authorization\s*[:=]\s*)(bearer\s+|basic\s+)?\S+/gi, '$1$2•••'],
+  [/(authorization\s*[:=]\s*)(?:\w+\s+)?\S+/gi, '$1•••'],
   [/\bbearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi, 'bearer •••'],
   [/\b(?:sk|pk|rk|ghp|gho|ghs|github_pat|xox[abprs])[-_][A-Za-z0-9_-]{8,}/g, '•••'],
   [/((?:api[_-]?key|access[_-]?token|token|secret|password|passwd|pwd)\s*[=:]\s*)("[^"]*"|'[^']*'|\S+)/gi, '$1•••'],
@@ -180,7 +183,7 @@ const SECRETS: [RegExp, string][] = [
   [/(\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)=)\S+/g, '$1•••'],
   [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s@]+@/gi, '$1•••@'],
   [/(\bcurl\b[^|;&]*?\s(?:-u|--user)[= ]?[^\s:]+:)\S+/gi, '$1•••'],
-  [/(\b(?:sshpass|mysql|mysqldump)\b[^|;&]*?\s-p ?)\S+/gi, '$1•••'],
+  [/(\b(?:sshpass|mysql|mysqldump)\b[^|;&]*?\s-p ?)("[^"]*"|'[^']*'|\S+)/gi, '$1•••'],
   [/\bAKIA[0-9A-Z]{16}\b/g, '•••'],
   [/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, '•••'],
   [/([?&](?:key|sig|signature|access_token|api_key|token)=)[^\s&]+/gi, '$1•••'],
@@ -188,7 +191,7 @@ const SECRETS: [RegExp, string][] = [
 ]
 
 /** Mask credentials: the card shows commands on screen, and screens get shared. */
-export const scrub = (s: string) => SECRETS.reduce((t, [re, to]) => t.replace(re, to), stripControl(s))
+export const scrub = (s: string) => SECRETS.reduce((t, [re, to]) => t.replace(re, to), stripControl(s.slice(0, SCRUB_MAX)))
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
 const text = (v: unknown) => (typeof v === 'string' ? v : '')

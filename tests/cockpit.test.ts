@@ -172,3 +172,12 @@ test('scrub masks basic-auth flags, db passwords, cloud and URL credentials', ()
   ]) expect(scrub(raw)).not.toContain(secret)
   expect(scrub('git commit -m ok')).toBe('git commit -m ok')
 })
+
+test('scrub masks any Authorization scheme and quoted mysql passwords, and stays fast on huge input', () => {
+  expect(scrub('Authorization: Token abc123')).not.toContain('abc123')
+  expect(scrub('Authorization: Bearer abc123xyz')).not.toContain('abc123xyz')
+  expect(scrub('mysql -p"my pw" db')).not.toContain('pw')
+  const t = performance.now()
+  scrub('mysql ' + '-p'.repeat(50000))
+  expect(performance.now() - t).toBeLessThan(200)
+})

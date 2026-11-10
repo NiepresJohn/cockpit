@@ -218,7 +218,8 @@ export const register: Register = (on, options) => {
 
   on('turn.step', async function* ($, e, next) {
     if (!e.agentId) {
-      await patch($, s => (s.model === e.model && s.effort === String(e.effort ?? '') ? {} : { model: e.model, effort: String(e.effort ?? '') }))
+      const effort = clip(String(e.effort ?? ''), 12)
+      await patch($, s => (s.model === e.model && s.effort === effort ? {} : { model: e.model, effort }))
       return yield* next(e)
     }
     const result = yield* next(e)
