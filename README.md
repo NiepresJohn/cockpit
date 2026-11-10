@@ -4,6 +4,10 @@ A live session card that sits above the Claude Code prompt. It shows what the se
 
 A mod for Claude Code, written in TypeScript and React (Ink).
 
+![Cockpit card in the Claude Code CLI, showing demo data](docs/cockpit.png)
+
+*Demo data, from `/cockpit demo`.*
+
 ## What it shows
 
 - **Header:** model, effort gauge, repo, branch, uncommitted diff (`+add −del`, or `✓ clean`) and commits ahead/behind upstream.
