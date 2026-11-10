@@ -1,29 +1,72 @@
 # Cockpit
 
-A live card above the Claude Code prompt.
+A live session card that sits above the Claude Code prompt. It shows what the session is doing and how much headroom you have left, without leaving the terminal.
 
-- Header: model, effort, repo, branch, uncommitted diff.
-- Rule line: a spinner and what the model is doing right now (`$ npm test`, `Edit hooks/lib.ts`).
-- Meters: 5-hour and 7-day limits (with reset countdown), context left, cost, turn timer and edit count.
-- Agents: while subagents run, one row each with a clock and their latest tool call.
-- Toast when a limit crosses 85% or 95%.
+A mod for Claude Code, written in TypeScript and React (Ink).
 
-Under 64 columns it collapses to one line.
+## What it shows
+
+- **Header:** model, effort gauge, repo, branch, uncommitted diff (`+add −del`, or `✓ clean`) and commits ahead/behind upstream.
+- **Activity line:** a spinner plus what the model is doing right now (`$ npm test`, `Edit hooks/lib.ts`). Secrets such as bearer tokens are redacted.
+- **Meters:** 5-hour and 7-day limits with a reset countdown, context left with a short history sparkline, cost, turn timer, and run stats (turns, tool calls, edits). Bars use eighth-block gradients and pulse above 85%.
+- **Agents:** while subagents run, one row each with a clock and its latest tool call. Finished agents stay briefly, newest first.
+- **Toasts:** a notification when a limit crosses 85% or 95%.
+
+## Layout by width
+
+| Terminal width | Card |
+|---|---|
+| under 64 columns | a single line |
+| 64–83 | full card, effort gauge hidden |
+| 84–109 | full card with effort gauge |
+| 110 and up | bars stretch to use the room |
+
+## Install
+
+Cockpit is a local Claude Code plugin. Clone it where you keep local mods and enable it:
+
+```sh
+git clone https://github.com/NiepresJohn/cockpit.git
+claude plugin validate ./cockpit
+```
+
+Then load it with `/reload-plugins` in a running session.
 
 ## Commands
 
-`/cockpit [open|close|reset]`
+`/cockpit [open|close|reset|demo]`
 
-## Setting
+| Verb | Effect |
+|---|---|
+| `open` | Show the card (default). |
+| `close` | Hide it. |
+| `reset` | Clear tracked state: agents, history, stats. |
+| `demo` | Load fake data so you can preview the layout. The next real event overwrites parts of it; `reset` clears it. |
 
-`openOnStart` (default on).
+## Settings
 
-## Layout
+| Option | Default | Description |
+|---|---|---|
+| `openOnStart` | on | Open the card when a session starts. |
+| `ascii` | off | Plain ASCII only (no block or braille glyphs), for SSH, tmux or limited fonts. |
 
-- `hooks/cockpit.tsx`: hook handlers, state, pane sizing.
+## Project layout
+
+- `hooks/cockpit.tsx`: hook handlers, state, git polling, pane sizing, the `/cockpit` command.
 - `hooks/card.tsx`: the animated card (client module).
-- `hooks/lib.ts`: pure helpers.
+- `hooks/lib.ts`: pure helpers (formatting, countdowns, threshold crossing, agent bookkeeping, row math).
+- `tests/cockpit.test.ts`: plugin tests.
+- `types/index.d.ts`: host API types.
 
 ## Develop
 
-`claude plugin validate .` and `claude plugin test .`
+```sh
+claude plugin validate .
+claude plugin test .
+```
+
+Card height is computed in two places, `cardRows` in `hooks/lib.ts` and the card itself, so change width thresholds in both.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
