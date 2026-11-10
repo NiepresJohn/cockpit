@@ -1,0 +1,32 @@
+{
+  "name": "cockpit",
+  "version": "1.0.0",
+  "description": "A live session card above the prompt: model and effort, repo and diff, 5-hour and 7-day limits, context, cost, and the agents that are running.",
+  "author": {
+    "name": "NiepresJohn",
+    "url": "https://github.com/NiepresJohn"
+  },
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "claude-code-mod",
+    "dashboard",
+    "agents",
+    "tui"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "openOnStart": {
+      "title": "Open on start",
+      "description": "Open the card when a session starts",
+      "type": "boolean",
+      "default": true
+    },
+    "ascii": {
+      "title": "ASCII only",
+      "description": "Draw with plain ASCII (no block or braille glyphs) for SSH, tmux or limited fonts",
+      "type": "boolean",
+      "default": false
+    }
+  }
+}
