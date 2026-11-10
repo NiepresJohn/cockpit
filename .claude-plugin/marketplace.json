@@ -1,0 +1,17 @@
+{
+  "name": "cockpit",
+  "owner": {
+    "name": "NiepresJohn",
+    "url": "https://github.com/NiepresJohn"
+  },
+  "plugins": [
+    {
+      "name": "cockpit",
+      "source": "./",
+      "description": "Live session card above the prompt: model, repo, limits, context, cost and running agents"
+    }
+  ],
+  "metadata": {
+    "description": "Cockpit: a live session card for the Claude Code CLI"
+  }
+}

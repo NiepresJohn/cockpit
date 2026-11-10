@@ -28,5 +28,7 @@
       "type": "boolean",
       "default": false
     }
-  }
+  },
+  "homepage": "https://github.com/NiepresJohn/cockpit",
+  "repository": "https://github.com/NiepresJohn/cockpit"
 }

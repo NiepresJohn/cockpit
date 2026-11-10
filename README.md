@@ -23,14 +23,23 @@ A mod for Claude Code, written in TypeScript and React (Ink).
 
 ## Install
 
-Cockpit is a local Claude Code plugin. Clone it where you keep local mods and enable it:
+In Claude Code:
 
-```sh
-git clone https://github.com/NiepresJohn/cockpit.git
-claude plugin validate ./cockpit
+```
+/plugin marketplace add NiepresJohn/cockpit
+/plugin install cockpit@cockpit
 ```
 
-Then load it with `/reload-plugins` in a running session.
+Or from a shell:
+
+```sh
+claude plugin marketplace add NiepresJohn/cockpit
+claude plugin install cockpit@cockpit
+```
+
+Start a new session, or run `/reload-plugins` in a running one. The card opens on start; see Settings to change that.
+
+Update with `claude plugin marketplace update cockpit`. Remove with `claude plugin uninstall cockpit`.
 
 ## Commands
 
