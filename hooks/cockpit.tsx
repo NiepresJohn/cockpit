@@ -2,7 +2,6 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import {
-  AGENT_ROWS,
   BASE_ROWS,
   COLORS,
   EDIT_TOOLS,
@@ -313,6 +312,7 @@ export const register: Register = (on, options) => {
     }
 
     const left = s.ctxTokens !== null && s.ctxWindow > 0 ? `${compact(Math.max(0, s.ctxWindow - s.ctxTokens))} left` : ''
+    const counts = agentCounts(s.agents)
     const last = s.lastTurn && !s.running ? `✓ ${clock(s.lastTurn.ms)} · ${s.lastTurn.edits} edit${s.lastTurn.edits === 1 ? '' : 's'}` : ''
     return (
       <els.Client
@@ -347,9 +347,9 @@ export const register: Register = (on, options) => {
           edits: s.edits,
           activity: s.running ? s.activity : '',
           last,
-          agents: visibleAgents(s.agents).slice(0, AGENT_ROWS),
-          agentsRunning: agentCounts(s.agents).running,
-          agentsTotal: agentCounts(s.agents).total,
+          agents: visibleAgents(s.agents),
+          agentsRunning: counts.running,
+          agentsTotal: counts.total,
         }}
       />
     )
