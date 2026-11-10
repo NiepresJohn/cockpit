@@ -23,6 +23,8 @@ A mod for Claude Code, written in TypeScript and React (Ink).
 
 ## Install
 
+Requires a Claude Code build with mod support. Developed and tested on 2.1.304.
+
 In Claude Code:
 
 ```
@@ -37,7 +39,7 @@ claude plugin marketplace add NiepresJohn/cockpit
 claude plugin install cockpit@cockpit
 ```
 
-Start a new session, or run `/reload-plugins` in a running one. The card opens on start; see Settings to change that.
+Start a new session, or run `/reload-plugins` in a running one. The card opens on start; see Settings to change that. Both options are optional and have defaults, so no configuration is needed.
 
 Update with `claude plugin marketplace update cockpit`. Remove with `claude plugin uninstall cockpit`.
 
