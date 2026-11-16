@@ -10,10 +10,11 @@ A mod for Claude Code, written in TypeScript and React (Ink).
 
 ## What it shows
 
-- **Header:** model, effort gauge, repo, branch, uncommitted diff (`+add −del`, or `✓ clean`) and commits ahead/behind upstream.
+- **Header:** model, effort gauge, repo, branch, uncommitted diff (`+add −del`, `?n` untracked files, or `✓ clean`) and commits ahead/behind upstream.
 - **Activity line:** a spinner plus what the model is doing right now (`$ npm test`, `Edit hooks/lib.ts`). Secrets such as bearer tokens are redacted.
 - **Meters:** 5-hour and 7-day limits with a reset countdown, context left with a short history sparkline, cost, turn timer, and run stats (turns, tool calls, edits). Bars use eighth-block gradients and pulse above 85%.
 - **Agents:** while subagents run, one row each with a clock and its latest tool call. Finished agents stay briefly, newest first.
+- **Frame:** the card sits in a border with a slow gradient that drifts while the model works and flashes green when a turn or agent finishes.
 - **Toasts:** a notification when a limit crosses 85% or 95%.
 
 ## Layout by width
