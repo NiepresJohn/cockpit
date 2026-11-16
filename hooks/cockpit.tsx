@@ -2,13 +2,11 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import {
-  BASE_ROWS,
   COLORS,
   EDIT_TOOLS,
   EMPTY,
   addAgent,
   agentCounts,
-  agentRows,
   agentStatusFor,
   aheadBehind,
   isVerb,
@@ -19,12 +17,13 @@ import {
   compact,
   countdown,
   crossed,
-  diffTotals,
+  dirHint,
   doing,
   effortLevel,
   findWindow,
   modelName,
   pushHist,
+  readWhere,
   restore,
   scrub,
   sweepAgents,
@@ -32,12 +31,18 @@ import {
   visibleAgents,
   windowLabel,
 } from './lib'
-import type { Agent, State, Where } from './lib'
-
-const PANE = 'cockpit'
-const PANE_COLUMNS = 66
+import type { Agent, State } from './lib'
 
 const store = atom({ plugin: 'cockpit', key: 'state' } as const, EMPTY)
+
+/** Bookkeeping must never stop a hook from reaching `next`: swallow and carry on. */
+const safe = async (f: () => unknown) => {
+  try {
+    await f()
+  } catch {
+    // shortcut: failures are dropped silently; add logging if a host exposes one
+  }
+}
 
 const load = async ($: EngineInterface) => restore(await read($, store))
 const patch = ($: EngineInterface, f: (s: State) => Partial<State>) =>
@@ -52,67 +57,55 @@ const patchAgent = ($: EngineInterface, id: string, f: (a: Agent) => Partial<Age
 
 // ---------------------------------------------------------------- pane
 
-let isPlaced = false
-// Set by `/cockpit close`: automatic reopening (turn start, agent growth) must respect it.
+// Drawn as an AbovePrompt band, not a Pane: a Pane docks beside the transcript on wide terminals.
+let isShown = false
+// Set by `/cockpit close`: automatic showing (session and turn start) must respect it.
 let closedByUser = false
-let shownRows = BASE_ROWS
 
-async function openPane($: EngineInterface, rows = shownRows) {
-  // `columns` applies when docked beside the transcript, `rows` when seated inline above the prompt.
-  const opened = await $.ui.open({ id: PANE, title: 'Cockpit', columns: PANE_COLUMNS, rows })
-  isPlaced = opened.isPlaced
+const show = () => {
+  isShown = true
   closedByUser = false
-  return opened
-}
-
-/** The pane grows while agents run; reopen it only when the row count really changed. */
-async function fitPane($: EngineInterface) {
-  const rows = BASE_ROWS + agentRows((await load($)).agents)
-  if (rows === shownRows) return
-  shownRows = rows
-  if (isPlaced && !closedByUser) await openPane($, rows).catch(() => undefined)
 }
 
 // ---------------------------------------------------------------- reads from the machine
 
 /** Repo, branch and uncommitted diff of the folder the session is in now; outside a repo, the folder name. */
+// Folder the work is really in, learned from tool calls: the session's own cwd is where it was launched.
+let workDir = ''
 let probing = false
-let probeAgain: string | undefined | null = null
+let pending = false
+let pendingAt: string | undefined
 
 /** Coalesce bursts (every Bash call and edit probes): one git round at a time, one rerun for the latest ask. */
 async function probeWhere($: EngineInterface, at?: string) {
   if (probing) {
-    probeAgain = at
+    pending = true
+    pendingAt = at ?? pendingAt
     return
   }
   probing = true
   try {
     await probeOnce($, at)
+  } catch {
+    // a failed read keeps the last known repo on the card
   } finally {
     probing = false
   }
-  if (probeAgain !== null) {
-    const next = probeAgain
-    probeAgain = null
+  if (pending) {
+    const next = pendingAt
+    pending = false
+    pendingAt = undefined
     await probeWhere($, next)
   }
 }
 
 async function probeOnce($: EngineInterface, at?: string) {
-  const cwd = at ?? (await $.session.cwd().catch(() => ''))
+  const cwd = at ?? (workDir || (await $.session.cwd().catch(() => '')))
   const git = async (...args: string[]) => {
     const r = await $.process.run(['git', '-c', 'core.fsmonitor=false', '--no-optional-locks', ...args], { cwd: cwd || undefined, timeoutMs: 3000 }).catch(() => null)
     return r && r.exitCode === 0 ? r.stdout.trim() : ''
   }
-  const top = await git('rev-parse', '--show-toplevel')
-  const where: Where = top
-    ? {
-        repo: clip(top.split('/').pop() ?? '', 64),
-        branch: (await git('branch', '--show-current')) || (await git('rev-parse', '--short', 'HEAD')),
-        ...diffTotals(await git('diff', 'HEAD', '--numstat')),
-        ...aheadBehind(await git('rev-list', '--left-right', '--count', '@{u}...HEAD')),
-      }
-    : { repo: clip(cwd.split('/').filter(Boolean).pop() ?? '', 64), branch: '', add: 0, del: 0, ahead: 0, behind: 0 }
+  const where = await readWhere(git, cwd)
   await patch($, s => (JSON.stringify(s.where) === JSON.stringify(where) ? {} : { where }))
 }
 
@@ -138,24 +131,28 @@ export const register: Register = (on, options) => {
   const ascii = options.ascii === true
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({
+    workDir = ''
+    await safe(() => $.command.register({
       name: 'cockpit',
       description: 'Cockpit, the live session card: open, close or reset it',
       argumentHint: '[open|close|reset|demo]',
-    })
+    }))
     // A host without usage (headless, an SDK host, a session not yet bound) just starts without it.
-    const u = await $.session.usage().catch(() => null)
-    if (u) await patch($, () => readingToState(u))
-    const started = await $.clock.now()
-    await patch($, s => (s.startedAt > 0 ? {} : { startedAt: started }))
+    await safe(async () => {
+      const u = await $.session.usage().catch(() => null)
+      if (u) await patch($, () => readingToState(u))
+      const started = await $.clock.now()
+      // A process that died mid-turn leaves stale running state behind.
+      await patch($, s => ({ running: false, activity: '', ...(s.startedAt > 0 ? {} : { startedAt: started }) }))
+    })
     void probeWhere($)
-    if (openOnStart) void openPane($).catch(() => undefined)
+    if (openOnStart) show()
     return next(e)
   })
 
   on('session.end', async ($, e, next) => {
     // After /clear the old gauge would lie until the next measurement.
-    if (e.reason === 'clear') await patch($, s => ({ ...EMPTY, model: s.model, where: s.where, limits: s.limits, cost: s.cost }))
+    if (e.reason === 'clear') await safe(() => patch($, s => ({ ...EMPTY, model: s.model, where: s.where, limits: s.limits, cost: s.cost })))
     return next(e)
   })
 
@@ -163,9 +160,8 @@ export const register: Register = (on, options) => {
     const verb = e.args.trim().split(/\s+/)[0] || 'open'
     if (!isVerb(verb)) return { text: `Unknown option "${verb}". Usage: /cockpit [${VERBS.join('|')}]` }
     if (verb === 'close') {
-      await $.ui.close({ id: PANE })
       closedByUser = true
-      isPlaced = false
+      isShown = false
       return { text: 'Cockpit closed.' }
     }
     if (verb === 'demo') {
@@ -181,7 +177,7 @@ export const register: Register = (on, options) => {
           { kind: 'five_hour', pct: 72, resetsAt: iso(134) },
           { kind: 'seven_day', pct: 91, resetsAt: iso(3 * 1440 + 240) },
         ],
-        where: { repo: 'my-app', branch: 'feat/search', add: 128, del: 37, ahead: 2, behind: 1 },
+        where: { repo: 'my-app', branch: 'feat/search', add: 128, del: 37, untracked: 2, ahead: 2, behind: 1 },
         agents: [
           agent('d1', 'code-reviewer', 'running', 'Read src/components/Search.tsx', 62),
           agent('d2', 'security-reviewer', 'running', '$ grep -rn userId', 41),
@@ -190,70 +186,82 @@ export const register: Register = (on, options) => {
         ],
         lastTurn: { ms: 83000, edits: 3 }, hist: [22, 30, 41, 38, 55, 63, 70, 74, 81, 88], tools: 142, turns: 17, startedAt: now - 4320000,
       }))
-      await fitPane($)
       return { text: 'Cockpit demo loaded (fake data). /cockpit reset to clear; the next real event overwrites parts of it.' }
     }
     if (verb === 'reset') {
       await patch($, s => ({ ...EMPTY, model: s.model, where: s.where }))
       return { text: 'Cockpit reset.' }
     }
-    const opened = await openPane($)
-    return { text: opened.isPlaced ? 'Cockpit opened.' : `Cockpit is not shown yet: ${opened.reason}` }
+    show()
+    return { text: 'Cockpit opened.' }
   })
 
   // A `cd` in a Bash call or a worktree switch moves the session; re-read repo, branch and diff there.
   on('classic.CwdChanged', async ($, e, next) => {
-    void probeWhere($, e.new_cwd)
+    if (typeof e.new_cwd === 'string' && e.new_cwd) workDir = e.new_cwd
+    void probeWhere($, workDir || undefined)
     return next(e)
   })
 
   on('turn.start', async ($, e, next) => {
     void probeWhere($)
-    if (openOnStart && !isPlaced && !closedByUser) void openPane($).catch(() => undefined)
-    const now = await $.clock.now()
-    await patch($, s => ({ running: true, turnStart: now, edits: 0, activity: '', agents: sweepAgents(s.agents, now) }))
-    await fitPane($)
+    if (openOnStart && !closedByUser) isShown = true
+    await safe(async () => {
+      const now = await $.clock.now()
+      await patch($, s => ({ running: true, turnStart: now, edits: 0, activity: '', agents: sweepAgents(s.agents, now) }))
+    })
     return next(e)
   })
 
   on('turn.step', async function* ($, e, next) {
     if (!e.agentId) {
       const effort = clip(String(e.effort ?? ''), 12)
-      await patch($, s => (s.model === e.model && s.effort === effort ? {} : { model: e.model, effort }))
+      const model = clip(String(e.model ?? ''), 64)
+      await safe(() => patch($, s => (s.model === model && s.effort === effort ? {} : { model, effort })))
       return yield* next(e)
     }
     const result = yield* next(e)
     const u = result.usage ?? {}
     const ctx = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
-    await patchAgent($, e.agentId, a => ({ steps: a.steps + 1, ctx: ctx > 0 ? ctx : a.ctx }))
+    const id = e.agentId
+    await safe(() => patchAgent($, id, a => ({ steps: a.steps + 1, ctx: ctx > 0 ? ctx : a.ctx })))
     return result
   })
 
   on('session.measure', async ($, e, next) => {
-    const before = (await load($)).limits
-    const now = await $.clock.now()
-    for (const r of e.rateLimits) {
-      if (crossed(before.find(l => l.kind === r.kind)?.pct, r.percentUsed) === null) continue
-      const reset = countdown(r.resetsAt, now)
-      await $.ui.toast(`${windowLabel(r.kind)} limit ${Math.round(r.percentUsed)}%${reset ? ` · resets in ${reset}` : ''}`)
-    }
-    await patch($, () => readingToState(e))
+    await safe(async () => {
+      const before = (await load($)).limits
+      const now = await $.clock.now()
+      for (const r of e.rateLimits) {
+        if (crossed(before.find(l => l.kind === r.kind)?.pct, r.percentUsed) === null) continue
+        const reset = countdown(r.resetsAt, now)
+        await safe(() => $.ui.toast(`${windowLabel(r.kind)} limit ${Math.round(r.percentUsed)}%${reset ? ` · resets in ${reset}` : ''}`))
+      }
+      await patch($, () => readingToState(e))
+    })
     return next(e)
   })
 
   on('tool.call', async ($, e, next) => {
     const tool = String(e.tool)
     const line = clip(doing(tool, e), 56)
-    if (tool !== 'SubagentHandback') {
+    const dir = e.agentId ? '' : dirHint(e)
+    await safe(async () => {
+      if (tool === 'SubagentHandback') return
       if (e.agentId) await patchAgent($, e.agentId, () => ({ tool, doing: line }))
       else await patch($, () => ({ activity: line }))
-    }
+    })
     const ran = await next(e)
-    const didRun = ran.deny === undefined
-    const isEdit = didRun && ran.isError !== true && EDIT_TOOLS.has(tool)
-    if (didRun && tool !== 'SubagentHandback') await patch($, s => ({ tools: s.tools + 1 }))
-    if (isEdit) await patch($, s => ({ edits: s.edits + 1 }))
-    if (isEdit || tool === 'Bash') void probeWhere($)
+    await safe(async () => {
+      const didRun = ran.deny === undefined
+      // The folder only moves for a call that actually ran.
+      const moved = didRun && dir !== '' && dir !== workDir
+      if (moved) workDir = dir
+      const isEdit = didRun && ran.isError !== true && EDIT_TOOLS.has(tool)
+      if (didRun && tool !== 'SubagentHandback') await patch($, s => ({ tools: s.tools + 1 }))
+      if (isEdit) await patch($, s => ({ edits: s.edits + 1 }))
+      if (moved || isEdit || tool === 'Bash') void probeWhere($)
+    })
     return ran
   })
 
@@ -262,41 +270,44 @@ export const register: Register = (on, options) => {
     if (started.deny !== undefined || !started.agentId) return started
     const agent: Agent = {
       id: started.agentId,
-      name: clip(e.description || e.name || e.subagentType, 40),
+      name: clip(scrub(String(e.description || e.name || e.subagentType || '')), 40),
       tool: '',
       doing: '',
       status: 'running',
-      since: await $.clock.now(),
+      since: await $.clock.now().catch(() => Date.now()),
       endAt: null,
       steps: 0,
       ctx: 0,
     }
-    await patch($, s => ({ agents: addAgent(s.agents, agent) }))
-    await fitPane($)
+    await safe(() => patch($, s => ({ agents: addAgent(s.agents, agent) })))
     return started
   })
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
-    const now = await $.clock.now()
-    if (!e.agentId) {
-      await patch($, s => ({ running: false, activity: '', lastTurn: { ms: e.durationMs, edits: s.edits }, turns: s.turns + 1, hist: s.ctxPct === null ? s.hist : pushHist(s.hist, s.ctxPct) }))
-      const cost = await sessionCost($)
-      if (cost !== null) await patch($, () => ({ cost }))
-    } else {
-      const id = e.agentId
-      await patchAgent($, id, a => (a.status === 'running' ? { status: agentStatusFor(e.reason), endAt: now, ...(e.answer ? { doing: clip(scrub(e.answer), 64) } : {}) } : {}))
-    }
-    await fitPane($)
+    await safe(async () => {
+      const now = await $.clock.now()
+      if (!e.agentId) {
+        await patch($, s => ({ running: false, activity: '', lastTurn: { ms: e.durationMs, edits: s.edits }, turns: s.turns + 1, hist: s.ctxPct === null ? s.hist : pushHist(s.hist, s.ctxPct) }))
+        const cost = await sessionCost($)
+        if (cost !== null) await patch($, () => ({ cost }))
+      } else {
+        const id = e.agentId
+        const answer = typeof e.answer === 'string' ? e.answer : ''
+        await patchAgent($, id, a => (a.status === 'running' ? { status: agentStatusFor(e.reason), endAt: now, ...(answer ? { doing: clip(scrub(answer), 64) } : {}) } : {}))
+      }
+    })
     return done
   })
 
   // ---------------------------------------------------------------- drawing
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (!isShown || e.props.hasSurvey) return next(e)
     const els = $.ui.resolve(e)
     const { Box, Text } = els
-    const [s, now] = await Promise.all([load($), $.clock.now()])
+    const [s, now] = await Promise.all([load($), $.clock.now()]).catch(() => [null, 0] as const)
+    if (!s) return next(e)
     const W = Math.max(16, e.props.bodyColumns)
     const model = modelName(s.model)
     const five = findWindow(s.limits, 'five')
@@ -308,7 +319,7 @@ export const register: Register = (on, options) => {
       return (
         <Box width={W}>
           <Text wrap="truncate">
-            {`${s.running ? '◆' : '◇'} ${model}  ctx ${pct(s.ctxPct)}  5h ${pct(five?.pct)}  7d ${pct(week?.pct)}${s.cost !== null ? `  ${usd(s.cost)}` : ''}${s.where.branch ? `  ⎇ ${clip(s.where.branch, 24)}` : ''}`}
+            {`${s.running ? '◆' : '◇'} ${model}  ctx ${pct(s.ctxPct)}  5h ${pct(five?.pct)}  7d ${pct(week?.pct)}${s.cost !== null ? `  ${usd(s.cost)}` : ''}${s.where.repo ? `  ⌂ ${clip(s.where.repo, 20)}` : ''}${s.where.branch ? `  ⎇ ${clip(s.where.branch, 24)}` : ''}${s.where.add || s.where.del ? `  +${s.where.add} −${s.where.del}` : ''}`}
           </Text>
         </Box>
       )
@@ -335,6 +346,7 @@ export const register: Register = (on, options) => {
           branch: clip(s.where.branch, 24),
           add: s.where.add,
           del: s.where.del,
+          untracked: s.where.untracked,
           five: { pct: five?.pct ?? null, tail: '', resetsAt: five?.resetsAt ?? null },
           week: { pct: week?.pct ?? null, tail: '', resetsAt: week?.resetsAt ?? null },
           ctx: { pct: s.ctxPct, tail: left },

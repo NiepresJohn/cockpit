@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { isVerb, aheadBehind, pushHist, HIST_LEN, agentCounts, MAX_AGENTS, STALE_AGENT_MS, addAgent, sweepAgents, agentRows, agentStatusFor, cardRows, clip, clock, compact, countdown, crossed, diffTotals, doing, findWindow, modelName, restore, scrub, usd, visibleAgents, windowLabel } from '../hooks/lib'
+import { baseName, dirHint, readWhere, isVerb, aheadBehind, pushHist, HIST_LEN, agentCounts, MAX_AGENTS, STALE_AGENT_MS, addAgent, sweepAgents, agentRows, agentStatusFor, cardRows, clip, clock, compact, countdown, crossed, diffTotals, doing, findWindow, modelName, restore, scrub, usd, visibleAgents, windowLabel } from '../hooks/lib'
 import type { Agent } from '../hooks/lib'
 
 const agent = (over: Partial<Agent>): Agent => ({ id: 'a', name: 'n', tool: '', doing: '', status: 'running', since: 0, endAt: null, steps: 0, ctx: 0, ...over })
@@ -64,7 +64,7 @@ test('agent rows appear only while one runs, running first', () => {
   expect(agentRows([done])).toBe(0)
   expect(agentRows([done, live])).toBe(3)
   expect(visibleAgents([done, live]).map(a => a.id)).toEqual(['l', 'd'])
-  expect(cardRows(100, [done, live])).toBe(9)
+  expect(cardRows(100, [done, live])).toBe(11)
   expect(cardRows(50, [done, live])).toBe(1)
   expect(agentStatusFor('answer')).toBe('done')
   expect(agentStatusFor('aborted')).toBe('stopped')
@@ -122,7 +122,7 @@ test('misc edges: clip, compact, doing on odd input, restore keeps partial where
   expect(compact(999)).toBe('999')
   expect(doing('Read', null)).toBe('Read')
   expect(doing('Grep', { input: { pattern: 'foo' } })).toBe('Grep foo')
-  expect(restore({ where: { repo: 'r' } }).where).toEqual({ repo: 'r', branch: '', add: 0, del: 0, ahead: 0, behind: 0 })
+  expect(restore({ where: { repo: 'r' } }).where).toEqual({ repo: 'r', branch: '', add: 0, del: 0, untracked: 0, ahead: 0, behind: 0 })
   expect(modelName('totally-unknown-model-id-that-is-long')).toBe('totally-unknown-model…')
 })
 
@@ -180,4 +180,63 @@ test('scrub masks any Authorization scheme and quoted mysql passwords, and stays
   const t = performance.now()
   scrub('mysql ' + '-p'.repeat(50000))
   expect(performance.now() - t).toBeLessThan(200)
+})
+
+// A scripted git: answers by the command's first words, '' for anything unlisted (as a failed run does).
+const fakeGit = (answers: Record<string, string>) => async (...args: string[]) => answers[args.join(' ')] ?? ''
+
+test('baseName handles Windows and POSIX paths and trailing separators', () => {
+  expect(baseName('C:\\Users\\me\\proj')).toBe('proj')
+  expect(baseName('/a/b/c/')).toBe('c')
+  expect(baseName('')).toBe('')
+})
+
+test('readWhere outside a repo returns the folder name only', async () => {
+  const where = await readWhere(async () => '', 'C:\\Users\\me\\notes')
+  expect(where).toEqual({ repo: 'notes', branch: '', add: 0, del: 0, untracked: 0, ahead: 0, behind: 0 })
+})
+
+test('readWhere reads repo, branch, diff, untracked files and upstream distance', async () => {
+  const w = await readWhere(fakeGit({
+    'rev-parse --show-toplevel': 'C:/dev/my-app',
+    'rev-parse --verify -q HEAD': 'abc123',
+    'diff HEAD --numstat': '3\t1\ta.ts\n-\t-\timg.png\n2\t0\tb.ts',
+    'ls-files --others --exclude-standard': 'new1.ts\nnew2.ts',
+    'branch --show-current': 'feat/x',
+    'rev-list --left-right --count @{u}...HEAD': '1\t2',
+  }), 'C:\dev\my-app\src')
+  expect(w).toEqual({ repo: 'my-app', branch: 'feat/x', add: 5, del: 1, untracked: 2, ahead: 2, behind: 1 })
+})
+
+test('readWhere counts staged and unstaged changes in a repo with no commit yet', async () => {
+  const w = await readWhere(fakeGit({
+    'rev-parse --show-toplevel': '/r/fresh',
+    'diff --cached --numstat': '4\t0\ta.ts',
+    'diff --numstat': '1\t1\ta.ts',
+    'branch --show-current': 'main',
+  }), '/r/fresh')
+  expect(w).toMatchObject({ repo: 'fresh', branch: 'main', add: 5, del: 1 })
+})
+
+test('readWhere falls back to the short hash on a detached HEAD', async () => {
+  const w = await readWhere(fakeGit({
+    'rev-parse --show-toplevel': '/r/x',
+    'rev-parse --verify -q HEAD': 'abc',
+    'rev-parse --short HEAD': 'abc1234',
+  }), '/r/x')
+  expect(w.branch).toBe('abc1234')
+})
+
+test('restore fills untracked for state stored by an older version', () => {
+  expect(restore({ where: { repo: 'r', branch: 'b', add: 1, del: 2, ahead: 0, behind: 0 } }).where.untracked).toBe(0)
+})
+
+test('dirHint finds the folder a call works in from an absolute path or a leading cd', () => {
+  expect(dirHint({ input: { file_path: 'C:\\dev\\app\\src\\a.ts' } })).toBe('C:\\dev\\app\\src')
+  expect(dirHint({ input: { file_path: '/dev/app/a.ts' } })).toBe('/dev/app')
+  expect(dirHint({ input: { command: 'cd "C:\\dev\\my app" && npm test' } })).toBe('C:\\dev\\my app')
+  expect(dirHint({ input: { command: 'cd /dev/app; ls' } })).toBe('/dev/app')
+  expect(dirHint({ input: { command: 'cd sub && ls' } })).toBe('')
+  expect(dirHint({ input: { file_path: 'rel/a.ts' } })).toBe('')
+  expect(dirHint(null)).toBe('')
 })

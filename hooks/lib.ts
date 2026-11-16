@@ -13,7 +13,7 @@ export type Agent = {
   steps: number
   ctx: number
 }
-export type Where = { repo: string; branch: string; add: number; del: number; ahead: number; behind: number }
+export type Where = { repo: string; branch: string; add: number; del: number; untracked: number; ahead: number; behind: number }
 export type LastTurn = { ms: number; edits: number }
 export type State = {
   model: string
@@ -49,7 +49,7 @@ export const EMPTY: State = {
   ctxWindow: 0,
   cost: null,
   limits: [],
-  where: { repo: '', branch: '', add: 0, del: 0, ahead: 0, behind: 0 },
+  where: { repo: '', branch: '', add: 0, del: 0, untracked: 0, ahead: 0, behind: 0 },
   agents: [],
   lastTurn: null,
   hist: [],
@@ -66,8 +66,8 @@ export const COLORS = {
   purple: '#bb9af7',
   amber: '#e0af68',
   red: '#f7768e',
-  dim: '#565f89',
-  faint: '#3b4261',
+  dim: '#8089b3',
+  faint: '#5a6385',
   text: '#c0caf5',
 }
 export type Colors = typeof COLORS
@@ -81,22 +81,64 @@ export const HIST_LEN = 12
 export const NARROW = 64
 /** Rows of the card without the agents section: header, activity, rule, two meter rows, stats. */
 export const BASE_ROWS = 6
+export const FRAME_ROWS = 2 // top and bottom border lines of the animated frame
 
 /** Safe-ish text from stored state: anything not the shape we wrote falls back to the default. */
 export const restore = (stored: unknown): State => {
-  const s = typeof stored === 'object' && stored !== null ? (stored as Partial<State>) : {}
+  const s = (typeof stored === 'object' && stored !== null ? stored : {}) as Record<string, unknown>
+  const str = (k: keyof State) => (typeof s[k] === 'string' ? (s[k] as string) : (EMPTY[k] as string))
+  const num = (k: keyof State) => (typeof s[k] === 'number' && Number.isFinite(s[k]) ? (s[k] as number) : (EMPTY[k] as number))
+  const numOrNull = (k: keyof State) => (typeof s[k] === 'number' && Number.isFinite(s[k]) ? (s[k] as number) : null)
+  const w = (typeof s.where === 'object' && s.where !== null ? s.where : {}) as Record<string, unknown>
+  const wn = (k: keyof Where) => (typeof w[k] === 'number' && Number.isFinite(w[k]) ? (w[k] as number) : 0)
+  const rec = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
+  const STATUSES = ['running', 'done', 'failed', 'stopped']
   return {
-    ...EMPTY,
-    ...s,
-    where: { ...EMPTY.where, ...(s.where ?? {}) },
-    agents: Array.isArray(s.agents) ? s.agents : [],
-    limits: Array.isArray(s.limits) ? s.limits : [],
-    hist: Array.isArray(s.hist) ? s.hist.filter(n => typeof n === 'number') : [],
+    model: str('model'),
+    effort: str('effort'),
+    running: s.running === true,
+    turnStart: num('turnStart'),
+    edits: num('edits'),
+    activity: str('activity'),
+    ctxPct: numOrNull('ctxPct'),
+    ctxTokens: numOrNull('ctxTokens'),
+    ctxWindow: num('ctxWindow'),
+    cost: numOrNull('cost'),
+    limits: (Array.isArray(s.limits) ? s.limits : [])
+      .filter(l => rec(l) && typeof l.kind === 'string' && typeof l.pct === 'number' && Number.isFinite(l.pct))
+      .map(l => ({ kind: l.kind as string, pct: l.pct as number, resetsAt: typeof l.resetsAt === 'string' ? l.resetsAt : null })),
+    where: {
+      repo: typeof w.repo === 'string' ? w.repo : '',
+      branch: typeof w.branch === 'string' ? w.branch : '',
+      add: wn('add'),
+      del: wn('del'),
+      untracked: wn('untracked'),
+      ahead: wn('ahead'),
+      behind: wn('behind'),
+    },
+    agents: (Array.isArray(s.agents) ? s.agents : [])
+      .filter(a => rec(a) && typeof a.id === 'string' && STATUSES.includes(a.status as string))
+      .map(a => ({
+        id: a.id as string,
+        name: typeof a.name === 'string' ? a.name : '',
+        tool: typeof a.tool === 'string' ? a.tool : '',
+        doing: typeof a.doing === 'string' ? a.doing : '',
+        status: a.status as AgentStatus,
+        since: typeof a.since === 'number' ? a.since : 0,
+        endAt: typeof a.endAt === 'number' ? a.endAt : null,
+        steps: typeof a.steps === 'number' ? a.steps : 0,
+        ctx: typeof a.ctx === 'number' ? a.ctx : 0,
+      })),
+    lastTurn: rec(s.lastTurn) && typeof s.lastTurn.ms === 'number' && typeof s.lastTurn.edits === 'number' ? { ms: s.lastTurn.ms, edits: s.lastTurn.edits } : null,
+    hist: Array.isArray(s.hist) ? s.hist.filter((n): n is number => typeof n === 'number' && Number.isFinite(n)) : [],
+    tools: num('tools'),
+    turns: num('turns'),
+    startedAt: num('startedAt'),
   }
 }
 
 /** Control bytes (ESC, BEL, C1) would reach the terminal as escape sequences. */
-const stripControl = (s: string) => s.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '')
+const stripControl = (s: string) => s.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
 
 export const clip = (s: string, n: number) => {
   const one = stripControl(s).replace(/\s+/g, ' ').trim()
@@ -178,15 +220,21 @@ const SECRETS: [RegExp, string][] = [
   [/(authorization\s*[:=]\s*)(?:\w+\s+)?\S+/gi, '$1•••'],
   [/\bbearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi, 'bearer •••'],
   [/\b(?:sk|pk|rk|ghp|gho|ghs|github_pat|xox[abprs])[-_][A-Za-z0-9_-]{8,}/g, '•••'],
-  [/((?:api[_-]?key|access[_-]?token|token|secret|password|passwd|pwd)\s*[=:]\s*)("[^"]*"|'[^']*'|\S+)/gi, '$1•••'],
-  [/(--(?:token|password|api-key|secret)[= ])\S+/gi, '$1•••'],
-  [/(\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)=)\S+/g, '$1•••'],
-  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s@]+@/gi, '$1•••@'],
-  [/(\bcurl\b[^|;&]*?\s(?:-u|--user)[= ]?[^\s:]+:)\S+/gi, '$1•••'],
-  [/(\b(?:sshpass|mysql|mysqldump)\b[^|;&]*?\s-p ?)("[^"]*"|'[^']*'|\S+)/gi, '$1•••'],
-  [/\bAKIA[0-9A-Z]{16}\b/g, '•••'],
+  [/\b(?:glpat|ghu|ghr|npm|hf|gsk|whsec|xapp|shpat|dop_v1)[-_][A-Za-z0-9_-]{8,}/g, '•••'],
+  // JSON bodies and quoted values: "password":"a b", api_key = 'x y', secret=\"a b\"
+  [/((?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|pass(?:word|wd|phrase)?|pwd|credentials?)["']?\s*[=:]\s*)(\\?"(?:[^"\\]|\\.)*"|'[^']*'|\S+)/gi, '$1•••'],
+  [/(--[\w-]*(?:token|password|passwd|pass|secret|api-?key|passphrase|credential|private-key)[\w-]*[= ])(\\?"(?:[^"\\]|\\.)*"|'[^']*'|\S+)/gi, '$1•••'],
+  [/(\b[A-Za-z][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASS|PASSPHRASE|CREDENTIALS?|AUTH)=)(\\?"(?:[^"\\]|\\.)*"|'[^']*'|\S+)/g, '$1•••'],
+  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s/]*@/gi, '$1•••@'],
+  [/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+@/gi, '$1•••@'],
+  [/(\bcurl\b.*?\s(?:-u|--user)[= ]?(?:"[^":]*|'[^':]*|[^\s:"']*):)("[^"]*"|'[^']*'|\S+)/gi, '$1•••'],
+  [/(\bcurl\b.*?\s(?:-b|--cookie)[= ]?)("[^"]*"|'[^']*'|\S+)/gi, '$1•••'],
+  [/(\b(?:sshpass|mysql|mysqldump|mongosh|sqlcmd|redis-cli|ldapsearch|unzip|docker\s+login|gpg|openssl|htpasswd)\b.*?\s(?:-p|-P|-w|-a|--passphrase|-pass) ?(?:pass:)?)("[^"]*"|'[^']*'|\S+)/gi, '$1•••'],
+  [/(\b(?:aws_)?(?:secret_access_key|session_token)\s+)\S+/gi, '$1•••'],
+  [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, '•••'],
+  [/\bAIza[0-9A-Za-z_-]{30,}/g, '•••'],
   [/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, '•••'],
-  [/([?&](?:key|sig|signature|access_token|api_key|token)=)[^\s&]+/gi, '$1•••'],
+  [/((?:^|[?&])(?:x-amz-)?(?:key|sig|signature|access_token|api_key|token|auth|code|credential|session)=)[^\s&]+/gi, '$1•••'],
   [/(\bcookie\s*:\s*)\S.*/gi, '$1•••'],
 ]
 
@@ -201,12 +249,10 @@ export const doing = (tool: string, call: unknown) => {
   const c = isRecord(call) ? call : {}
   const input = isRecord(c.input) ? c.input : c
   if (typeof input.command === 'string') {
-    let cmd = input.command.split('\n').find(l => l.trim()) ?? ''
+    // Bounded first: a multi-MB command must not stall the hook.
+    let cmd = input.command.slice(0, 4000).split('\n').find(l => l.trim()) ?? ''
     // A leading `cd dir &&` says nothing about the work.
-    for (let prev = ''; prev !== cmd; ) {
-      prev = cmd
-      cmd = cmd.replace(/^\s*cd\s+("[^"]*"|'[^']*'|\S+)\s*(&&|;)\s*/, '')
-    }
+    cmd = cmd.replace(/^(?:\s*cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*)+/, '')
     return scrub(`$ ${cmd.replace(/\s+/g, ' ').trim() || 'cd'}`)
   }
   const path = text(input.file_path || input.notebook_path).split(/[\\/]/).slice(-2).join('/')
@@ -225,7 +271,7 @@ export const visibleAgents = (agents: Agent[]) =>
   [...agents.filter(a => a.status === 'running'), ...agents.filter(a => a.status !== 'running').reverse()].slice(0, AGENT_ROWS)
 
 /** Card height for a terminal width: one line when narrow, else the base rows plus agents. */
-export const cardRows = (width: number, agents: Agent[]) => (width < NARROW ? 1 : BASE_ROWS + agentRows(agents))
+export const cardRows = (width: number, agents: Agent[]) => (width < NARROW ? 1 : BASE_ROWS + agentRows(agents) + FRAME_ROWS)
 
 /** Header counts over every tracked agent, not just the rows the card has room to draw. */
 export const agentCounts = (agents: Agent[]) => ({ running: agents.filter(a => a.status === 'running').length, total: agents.length })
@@ -260,3 +306,54 @@ export const sweepAgents = (agents: Agent[], now: number): Agent[] =>
 
 export const VERBS = ['open', 'close', 'reset', 'demo'] as const
 export const isVerb = (v: string): v is (typeof VERBS)[number] => (VERBS as readonly string[]).includes(v)
+
+/** Last path segment; Windows cwds use backslashes, git's own output uses slashes. */
+export const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? ''
+
+/** Runs git with the given args in the session folder; resolves '' on any failure. */
+export type Git = (...args: string[]) => Promise<string>
+
+/**
+ * Repo, branch, uncommitted diff (tracked changes vs HEAD, or index+worktree in a repo with no
+ * commit yet), untracked-file count and upstream distance. Outside a repo: the folder name alone.
+ */
+export const readWhere = async (git: Git, cwd: string): Promise<Where> => {
+  const top = await git('rev-parse', '--show-toplevel')
+  if (!top) return { ...EMPTY.where, repo: clip(baseName(cwd), 64) }
+  const hasHead = (await git('rev-parse', '--verify', '-q', 'HEAD')) !== ''
+  const numstat = hasHead
+    ? await git('diff', 'HEAD', '--numstat')
+    : `${await git('diff', '--cached', '--numstat')}\n${await git('diff', '--numstat')}`
+  const untracked = (await git('ls-files', '--others', '--exclude-standard')).split('\n').filter(Boolean).length
+  return {
+    repo: clip(baseName(top), 64),
+    branch: (await git('branch', '--show-current')) || (hasHead ? await git('rev-parse', '--short', 'HEAD') : ''),
+    ...diffTotals(numstat),
+    untracked,
+    ...aheadBehind(await git('rev-list', '--left-right', '--count', '@{u}...HEAD')),
+  }
+}
+
+/** A usable absolute folder, or ''. Git Bash `/c/x` becomes `C:\x`; shell expansions are refused. */
+const cleanDir = (d: string) => {
+  if (!d || /[$`*(~]/.test(d)) return ''
+  // shortcut: /c/x is read as drive C; a real top-level folder named like one letter on POSIX loses its hint.
+  const gb = /^\/([A-Za-z])(?:\/(.*))?$/.exec(d)
+  if (gb?.[1]) return `${gb[1].toUpperCase()}:\\${(gb[2] ?? '').replace(/\//g, '\\')}`
+  if (/^[A-Za-z]:[\\/]/.test(d)) return d
+  if (d.includes('\\')) return ''
+  return d.startsWith('/') ? d : ''
+}
+
+/** Folder a tool call works in: an absolute file path's folder, or a leading absolute `cd`; else ''. */
+export const dirHint = (call: unknown): string => {
+  const c = isRecord(call) ? call : {}
+  const input = isRecord(c.input) ? c.input : c
+  const file = text(input.file_path || input.notebook_path)
+  if (/^(?:[A-Za-z]:[\\/]|\/)/.test(file)) {
+    const dir = file.replace(/[\\/][^\\/]*$/, '')
+    return cleanDir(/^[A-Za-z]:$/.test(dir) ? `${dir}\\` : dir || '/')
+  }
+  const m = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))(?=\s*(?:&&|;|$))/.exec(text(input.command).slice(0, 4000))
+  return cleanDir(m?.[1] ?? m?.[2] ?? m?.[3] ?? '')
+}
